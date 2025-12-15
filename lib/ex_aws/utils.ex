@@ -1,8 +1,6 @@
 defmodule ExAws.Utils do
   @moduledoc false
 
-  def identity(x), do: x
-
   def identity(x, _), do: x
 
   # This isn't tail recursive. However, given that the structures
@@ -43,7 +41,7 @@ defmodule ExAws.Utils do
   def camelize(string) do
     string
     |> to_charlist
-    |> Enum.reduce({true, ''}, fn
+    |> Enum.reduce({true, ~c""}, fn
       ?_, {_, acc} -> {true, acc}
       ?/, {_, acc} -> {false, [?. | acc]}
       char, {false, acc} -> {false, [char | acc]}

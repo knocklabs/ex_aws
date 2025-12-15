@@ -6,13 +6,14 @@ if Code.ensure_loaded?(ConfigParser) do
     @valid_config_keys ~w(
       aws_access_key_id aws_secret_access_key aws_session_token region
       role_arn source_profile credential_source external_id mfa_serial role_session_name credential_process
-      sso_start_url sso_region sso_account_id sso_role_name
+      sso_start_url sso_region sso_account_id sso_role_name sso_session
     )
+
+    @special_merge_keys ~w(sso_session)
 
     def security_credentials(profile_name) do
       config_credentials = profile_from_config(profile_name)
       shared_credentials = profile_from_shared_credentials(profile_name)
-      config = ExAws.Config.http_config(:sso)
 
       case config_credentials do
         %{
@@ -20,8 +21,19 @@ if Code.ensure_loaded?(ConfigParser) do
           sso_account_id: sso_account_id,
           sso_role_name: sso_role_name
         } ->
-          case get_sso_role_credentials(sso_start_url, sso_account_id, sso_role_name, config) do
+          sso_cache_key = Map.get(config_credentials, :sso_session, sso_start_url)
+          config = ExAws.Config.http_config(:sso)
+
+          case get_sso_role_credentials(sso_cache_key, sso_account_id, sso_role_name, config) do
             {:ok, sso_creds} -> {:ok, Map.merge(sso_creds, shared_credentials)}
+            {:error, _} = err -> err
+          end
+
+        %{credential_process: credential_process} ->
+          config = ExAws.Config.http_config(:sso)
+
+          case get_credentials_from_process(credential_process, config) do
+            {:ok, credentials} -> {:ok, Map.merge(credentials, shared_credentials)}
             {:error, _} = err -> err
           end
 
@@ -30,9 +42,9 @@ if Code.ensure_loaded?(ConfigParser) do
       end
     end
 
-    defp get_sso_role_credentials(sso_start_url, sso_account_id, sso_role_name, config) do
+    defp get_sso_role_credentials(sso_cache_key, sso_account_id, sso_role_name, config) do
       with {_, {:ok, sso_cache_content}} <-
-             {:read, File.read(get_sso_cache_file(sso_start_url))},
+             {:read, File.read(get_sso_cache_file(sso_cache_key))},
            {_,
             {:ok, %{"expiresAt" => expires_at, "accessToken" => access_token, "region" => region}}} <-
              {:decode, config[:json_codec].decode(sso_cache_content)},
@@ -59,16 +71,15 @@ if Code.ensure_loaded?(ConfigParser) do
       end
     end
 
-    defp get_sso_cache_file(sso_start_url) do
-      hash = :crypto.hash(:sha, sso_start_url) |> Base.encode16() |> String.downcase()
+    defp get_sso_cache_file(sso_cache_key) do
+      hash = :crypto.hash(:sha, sso_cache_key) |> Base.encode16() |> String.downcase()
 
       System.user_home()
       |> Path.join(".aws/sso/cache/#{hash}.json")
     end
 
     defp check_sso_expiration(expires_at_str) do
-      with {_, {:ok, expires_at, _}} <- {:timestamp, DateTime.from_iso8601(expires_at_str)},
-           {_, :gt} <- {:expires, DateTime.compare(expires_at, DateTime.utc_now())} do
+      with {:ok, _} <- check_expiration(expires_at_str) do
         :ok
       else
         {:timestamp, {:error, err}} ->
@@ -94,12 +105,13 @@ if Code.ensure_loaded?(ConfigParser) do
                 "",
                 [{"x-amz-sso_bearer_token", access_token}],
                 Map.get(config, :http_opts, [])
-              )},
+              )
+              |> ExAws.Request.maybe_transform_response()},
            {_, {:ok, body}} <- {:decode, config[:json_codec].decode(body_raw)} do
         {:ok, body}
       else
         {:request, {_, %{status_code: status_code} = resp}} ->
-          {:error, "SSO role credentials request responded with #{status_code}: #{resp}"}
+          {:error, "SSO role credentials request responded with #{status_code}: #{inspect(resp)}"}
 
         {:decode, err} ->
           {:error, "Could not decode SSO role credentials response: #{err}"}
@@ -127,16 +139,106 @@ if Code.ensure_loaded?(ConfigParser) do
       end
     end
 
+    defp get_credentials_from_process(credential_process, config) do
+      with {_, {:ok, process_result}} <-
+             {:process, execute_process(credential_process)},
+           {_, {:ok, %{"Version" => 1} = result}} <-
+             {:decode, config[:json_codec].decode(process_result)},
+           {_, {:ok, expiration}} <-
+             {:expiration, check_credentials_expiration(result)},
+           {_, {:ok, reformatted_creds}} <-
+             {:rename, format_result(result, expiration)} do
+        {:ok, reformatted_creds}
+      else
+        {:process, {:error, error}} -> {:error, "Could not execute process: #{error}"}
+        {:decode, _} -> {:error, "Credentials process results contains invalid json"}
+        {:expiration, error} -> error
+        {:rename, error} -> error
+      end
+    end
+
+    defp execute_process(credential_process) do
+      with [command | args] <- String.split(credential_process),
+           {result, 0} <- System.cmd(command, args, stderr_to_stdout: true) do
+        {:ok, result}
+      else
+        [] -> {:error, "Could not read command from config file : #{credential_process}"}
+        {error, exit_code} -> {:error, "Exit code : #{exit_code} - #{error}"}
+      end
+    end
+
+    defp format_result(result, nil) do
+      with {_, access_key} when not is_nil(access_key) <-
+             {:accessKey, Map.get(result, "AccessKeyId")},
+           {_, secret_access_key} when not is_nil(secret_access_key) <-
+             {:secretAccess, Map.get(result, "SecretAccessKey")} do
+        {:ok,
+         %{
+           access_key_id: access_key,
+           secret_access_key: secret_access_key
+         }}
+      else
+        {missing, _} -> {:error, "#{missing} is missing from credentials process response"}
+      end
+    end
+
+    defp format_result(result, expiration) do
+      with {_, access_key} when not is_nil(access_key) <-
+             {:accessKey, Map.get(result, "AccessKeyId")},
+           {_, secret_access_key} when not is_nil(secret_access_key) <-
+             {:secretAccess, Map.get(result, "SecretAccessKey")},
+           {_, session_token} when not is_nil(session_token) <-
+             {:sessionToken, Map.get(result, "SessionToken")} do
+        {:ok,
+         %{
+           access_key_id: access_key,
+           expiration: DateTime.to_unix(expiration),
+           secret_access_key: secret_access_key,
+           security_token: session_token
+         }}
+      else
+        {missing, _} -> {:error, "#{missing} is missing from credentials process response"}
+      end
+    end
+
+    defp check_credentials_expiration(%{"Expiration" => expiration_str}) do
+      with {:ok, expiration} <- check_expiration(expiration_str) do
+        {:ok, expiration}
+      else
+        {:timestamp, {:error, err}} ->
+          {:error, "Process returned invalid expiration format: #{err}"}
+
+        {:expires, _} ->
+          {:error, "Process returned expired credentials"}
+      end
+    end
+
+    defp check_credentials_expiration(_), do: {:ok, nil}
+
+    defp check_expiration(expiration_str) do
+      with {_, {:ok, expiration, _}} <- {:timestamp, DateTime.from_iso8601(expiration_str)},
+           {_, :gt} <- {:expires, DateTime.compare(expiration, DateTime.utc_now())} do
+        {:ok, expiration}
+      end
+    end
+
     def parse_ini_file({:ok, contents}, :system) do
       parse_ini_file({:ok, contents}, profile_name_from_env())
     end
 
     def parse_ini_file({:ok, contents}, profile_name) do
+      composite_key = "profile " <> profile_name
+
       contents
       |> ConfigParser.parse_string()
       |> case do
-        {:ok, %{^profile_name => config}} ->
-          strip_key_prefix(config)
+        {:ok, %{^profile_name => config} = full} ->
+          merge_special_keys(full, config)
+          |> strip_key_prefix()
+
+        {:ok, %{^composite_key => config} = full} ->
+          merge_special_keys(full, config)
+          |> strip_key_prefix()
 
         {:ok, %{}} ->
           %{}
@@ -147,6 +249,22 @@ if Code.ensure_loaded?(ConfigParser) do
     end
 
     def parse_ini_file(_, _), do: %{}
+
+    def merge_special_keys(full_config, credentials) do
+      credentials
+      |> Map.take(@special_merge_keys)
+      |> Enum.reduce(credentials, fn {key, val}, acc ->
+        merge_section = "#{String.replace(key, "_", "-")} #{val}"
+
+        case full_config do
+          %{^merge_section => config} ->
+            Map.merge(config, acc)
+
+          _ ->
+            acc
+        end
+      end)
+    end
 
     def strip_key_prefix(credentials) do
       credentials
@@ -180,18 +298,21 @@ if Code.ensure_loaded?(ConfigParser) do
     end
 
     defp profile_from_config(profile_name) do
-      section =
-        case profile_name do
-          :system -> "profile #{profile_name_from_env()}"
-          "default" -> "default"
-          other -> "profile #{other}"
-        end
+      section = profile_from_name(profile_name)
 
       System.user_home()
       |> Path.join(".aws/config")
       |> File.read()
       |> parse_ini_file(section)
     end
+
+    defp profile_from_name(:system) do
+      profile_name_from_env()
+      |> profile_from_name()
+    end
+
+    defp profile_from_name("default"), do: "default"
+    defp profile_from_name(other), do: "profile #{other}"
 
     defp profile_name_from_env() do
       System.get_env("AWS_PROFILE") || "default"

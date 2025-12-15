@@ -1,4 +1,127 @@
+vX.X.X (Next)
+- Correctly handle pod identity authorization when using Req adapter
+
+v2.6.1 (2025-12-09)
+- Endpoint updates
+- Document security_token configuration requirement for instance roles
+
+v2.6.0 (2025-10-03)
+- Endpoint updates
+- Update to support OTP 28
+- Fix geo operations for geo-places and geo-routes services
+- Hide warning while running tests
+- Fix bucket_as_host with virtual_host causing double bucket in URLs
+- Add HTTP method to debug log for requests
+- Add EKS pod identity credential provider
+
+v2.5.11 (2025-08-12)
+- Endpoint updates
+
+v2.5.10 (2025-06-16)
+- Fix crash on SSO credentials error
+- Fix type error on `ExAws.Operation.RestQuery.stream!2`
+- Fix build status shield on README
+
+v2.5.9 (2025-04-15)
+- Endpoint updates
+- Fixes for Req support, update minimum version to 0.5.10
+- Do not warn when optional deps are not available
+- Implement retries for TooManyRequestsException
+- Move regexes out of module attributes to fix compatibility with OTP 28
+
+v2.5.8 (2024-12-13)
+- Fix Req :follow_redirects deprecation warning
+- Add exclude_patterns to filter out temporary files
+
+v2.5.7 (2024-10-31)
+- Endpoint updates
+- Configurable max attempts for client-specific errors (4xx) using `max_attempts_client` in `retries` config
+- Fix `follow_redirect` option handling for `req` client
+
+v2.5.6 (2024-10-09)
+- Endpoint updates
+
+v2.5.5 (2024-09-10)
+- Endpoint updates
+- Drop support for Elixir 1.12
+- Add support for Elixir 1.17
+- Add Req request backend
+- Stop sending `content-length` header for DELETE and HEAD requests
+- Fix handling of `[profile <name>]` blocks in config file
+- Update test platform to Ubuntu 24.04
+
+v2.5.4 (2024-06-04)
+- Endpoint and region updates
+- Add support for Elixir 1.16
+- Drop support for Elixir 1.11
+- Add support for `sso_session` in `.aws/config`
+- Add support for EventBridge Pipes service
+- Add support for Pinpoint Mobiletargeting service
+- Add docs for running DynamoDB locally
+- Allow iodata body in s3 requests
+
+v2.5.3 (2024-03-20)
+- Add mappings for Chime
+
+v2.5.2 (2024-03-19)
+- Endpoint updates
+
+v2.5.1 (2024-01-11)
+- Endpoint updates
+- Documentation updates
+- Fix request error handling when error type is a proplist
+- Fixes to ensure Req and Finch clients return the same success fields as hackney
+- Add basic support for Personalise service
+- Add basic support for Bedrock service
+
+v2.5.0
+- [Breaking] Bump minimum elixir version to 1.11
+- Replace retired HTTPotion with Req as default web client
+- Endpoint updates
+
+v2.4.4
+- Endpoint updates
+- Add new endpoints for Chime SDK Media Pipelines API
+
+v2.4.3
+- Switch default behaviour of credential refreshing so that it must be explicitly enabled with
+`refreshable: true`. Having it as the default behaviour was causing breaking issues with ignoring 
+overridesin places they shouldn't have been.
+- Update endpoints
+
+v2.4.2
+- Add name, request, and response data to telemetry
+- Force refresh of auth config during long-running streaming operations to avoid failed auth
+- Update endpoints
+- Update docs
+
+v2.4.1
+- Add support for credentials_process in AWS credentials config
+- Service endpoint updates
+- Switch to `Config` from `Mix.Config`
+
+v2.4.0
+- Increase minimum elixir version to 1.10
+- Add `error_parser` field to operations. This may be optionally populated by services which
+need to do service-specific error handling prior to falling back to the default ExAws handling.
+
+V2.3.4
+- Fix crash in authentication for regions without SSO service (#894)
+- Service endpoint updates
+
+v2.3.3
+- Imporve resiliency/recovery when authentication token queries fail
+- Use `default` profile for `:aws_cli` config when `AWS_PROFILE is undefined
+- Include service in telemetry events
+- Fix crash generating auth headers for request with empty path
+
+v2.3.2
+- Fix type for IMDSv2 header
+- Make IMDSv2 optional, with fallback to v1
+- Fix spec for `Config.new/2`
+
 v2.3.1
+- Support container task role credentials in token provider
 - Fix issue with ECS instance meta data introduced in 2.3.0
 - Fix typespec on `ExAws.Request.HttpClient.request/5`
 

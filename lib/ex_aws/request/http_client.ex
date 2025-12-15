@@ -1,5 +1,5 @@
 defmodule ExAws.Request.HttpClient do
-  @moduledoc """
+  @moduledoc ~S'''
   Specifies expected behaviour of an HTTP client.
 
   ExAws allows you to use your HTTP client of choice, provided that
@@ -7,22 +7,46 @@ defmodule ExAws.Request.HttpClient do
 
   The default is `:hackney`.
 
-  ## Example
+  ## Example: Req
 
-  Here for example is the code required to make HTTPotion comply with this spec.
+  Here is an example using [Req](https://hexdocs.pm/req/readme.html).
 
-  In your config you would do:
+  First, create a module implementing the `ExAws.Request.HttpClient` behaviour.
 
-      config :ex_aws,
-        http_client: ExAws.Request.HTTPotion
+  ```
+  defmodule ExAws.Request.Req do
+    @moduledoc """
+    ExAws HTTP client implementation for Req.
+    """
 
-      defmodule ExAws.Request.HTTPotion do
-        @behaviour ExAws.Request.HttpClient
-        def request(method, url, body, headers, http_opts) do
-          {:ok, HTTPotion.request(method, url, [body: body, headers: headers, ibrowse: [headers_as_is: true]])}
-        end
+    @behaviour ExAws.Request.HttpClient
+
+    @impl ExAws.Request.HttpClient
+    def request(method, url, body, headers, _http_opts) do
+      request = Req.new(decode_body: false, retry: false)
+
+      case Req.request(request, method: method, url: url, body: body, headers: headers) do
+        {:ok, response} ->
+          response = %{
+            status_code: response.status,
+            headers: Req.get_headers_list(response),
+            body: response.body,
+          }
+
+          {:ok, response}
+
+        {:error, reason} ->
+          {:error, %{reason: reason}}
       end
+    end
+  end
+  ```
 
+  Then, in build-time config (e.g. config.exs):
+
+  ```
+  config :ex_aws,
+    http_client: ExAws.Request.Req
   ```
 
   When conforming your selected HTTP Client take note of a few things:
@@ -37,13 +61,13 @@ defmodule ExAws.Request.HttpClient do
     - Ensure the call to your chosen HTTP Client is correct and the return is
       in the same format as defined in the `c:request/5` callback
 
-  ## Example
+  ## Example: Mojito
 
       def request(method, url, body, headers, http_opts \\ []) do
         Mojito.request(method, url, headers, body, http_opts)
       end
 
-  """
+  '''
 
   @type http_method :: :get | :post | :put | :delete | :options | :head
   @callback request(
